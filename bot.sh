@@ -1,6 +1,6 @@
 #!/bin/sh
 
-cd /data/project/danmicholobot
+cd /data/project/danmicholobot/wikidata_labels_nb_no
 . ENV/bin/activate
 cd /data/project/danmicholobot/wikidata_labels_nb_no
 
