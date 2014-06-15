@@ -1,4 +1,6 @@
 numpy
+oursql
 mwclient
 mwtemplates
 simplejson
+git+https://github.com/danmichaelo/wikidataeditor.git
