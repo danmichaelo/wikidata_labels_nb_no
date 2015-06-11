@@ -6,7 +6,7 @@ import codecs
 
 import urllib
 import urllib2
-import simplejson as json
+import json
 from cookielib import CookieJar
 
 import mwclient
