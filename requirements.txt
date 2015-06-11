@@ -3,4 +3,5 @@ oursql
 mwclient
 mwtemplates
 simplejson
-git+https://github.com/danmichaelo/wikidataeditor.git
+colorama
+git+git://github.com/danmichaelo/wikidataeditor.git
