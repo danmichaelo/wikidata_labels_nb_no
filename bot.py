@@ -1,8 +1,10 @@
+import os
 import re
 import sys
 import logging
 import time
 import codecs
+import oursql
 
 import urllib
 import urllib2
@@ -24,6 +26,12 @@ opener.addheaders = [('User-agent', 'DanmicholoBot')]
 
 # https://www.mediawiki.org/wiki/Maxlag
 lagpattern = re.compile(r'Waiting for [^ ]*: (?P<lag>[0-9.]+) seconds? lagged')
+
+sql = oursql.connect(host='wikidatawiki.labsdb', db='wikidatawiki_p', charset='utf8', use_unicode=True,
+                     read_default_file=os.path.expanduser('~/replica.my.cnf'), autoreconnect=True)
+
+cur = sql.cursor()
+
 
 def raw_api_call(args):
     while True:
@@ -147,7 +155,7 @@ def set_aliases(entity, to_add, to_remove):
             'action': 'wbsetaliases',
             'bot': 1,
             'language': 'nb',
-            'summary': 'adding aliases from [no] to [nb]',
+            'summary': 'Copy aliases from [no] to [nb]',
             'add': '|'.join(to_add)
         }
         logging.info(args)
@@ -167,7 +175,8 @@ def set_aliases(entity, to_add, to_remove):
             'action': 'wbsetaliases',
             'bot': 1,
             'language': 'no',
-            'remove': '|'.join(to_remove)
+            'remove': '|'.join(to_remove),
+            'summary': 'Remove aliases from deprecated language [no]'
         }
         logging.info(args)
         response = raw_api_call(args)
@@ -175,14 +184,9 @@ def set_aliases(entity, to_add, to_remove):
         time.sleep(4)
 
 
-def check_wikidata_item(page, inspectfile):
-    response = get_entities('nowiki', page)
-    q_number = response['entities'].keys()[0]
-    if q_number == '-1':
-        logging.error('Finnes ingen wikidataside for %s', page)
-        return
+def check_wikidata_item(q_number):
 
-    logging.info('Page: %s (%s)', page, q_number)
+    logging.info('Page: %s', q_number)
 
     data = get_props(q_number)
 
@@ -204,7 +208,7 @@ def check_wikidata_item(page, inspectfile):
         if prop + 's' in data:
             res = data[prop + 's']
             if 'no' in res and 'nb' not in res:
-                logging.info('  Moving %s value from no to nb' % prop)
+                logging.info('  Copy %s value from no to nb' % prop)
                 val = res['no']['value']
                 set_prop(q_number, prop, 'nb', val, 'from the [no] %s' % prop)
                 set_prop(q_number, prop, 'no', '', '')
@@ -220,7 +224,7 @@ def check_wikidata_item(page, inspectfile):
                     set_prop(q_number, prop, 'no', '', 'since it equalled the [nb] %s.' % (prop))
                 else:
                     logging.info('  %s requires manual inspection, %s != %s', prop, vno, vnb)
-                    inspectfile.write('%s\t%s\t%s\t%s\n' % (q_number, prop, vno, vnb))
+                    # inspectfile.write('%s\t%s\t%s\t%s\n' % (q_number, prop, vno, vnb))
 
 
 if login(config['user'], config['pass']):
@@ -230,30 +234,33 @@ else:
     sys.exit(1)
 
 
-checkedfile = codecs.open('checked.txt', 'r', encoding='UTF-8')
-checked = [s.strip("\n") for s in checkedfile.readlines()]
-checkedfile.close()
+#checkedfile = codecs.open('checked.txt', 'r', encoding='UTF-8')
+#checked = [s.strip("\n") for s in checkedfile.readlines()]
+#checkedfile.close()
 
-logging.info("Ignoring %d files already checked" % len(checked))
+#logging.info("Ignoring %d files already checked" % len(checked))
 
-checkedfile = codecs.open('checked.txt', 'a', encoding='UTF-8', buffering=0)
-inspectfile = codecs.open('requires_inspection.txt', 'w', encoding='UTF-8', buffering=0)
+#checkedfile = codecs.open('checked.txt', 'a', encoding='UTF-8', buffering=0)
+#inspectfile = codecs.open('requires_inspection.txt', 'w', encoding='UTF-8', buffering=0)
 
 nowp = mwclient.Site('no.wikipedia.org')
 
 timing = np.zeros((10,))
 
-for page in nowp.allpages(filterredir='nonredirects'):
+cur.execute(u"""
+ SELECT term_entity_id FROM wb_terms where term_language="no" AND term_entity_type="item" GROUP BY term_entity_id
+""")
 
-    if page.page_title not in checked:
+for row in cur.fetchall():
 
-        t0 = time.time()
-        check_wikidata_item(page.page_title, inspectfile)
-        t1 = time.time()
-        timing[0:9] = timing[1:10]
-        timing[0] = t1 - t0
-        tt = timing[timing.nonzero()]
-        print '%.1f pages / min, %.1f sec / page' % (60. / tt.mean(), tt.mean())
 
-        checkedfile.write(page.page_title + "\n")
+    t0 = time.time()
+    check_wikidata_item('Q{}'.format(row[0]))
+    t1 = time.time()
+    timing[0:9] = timing[1:10]
+    timing[0] = t1 - t0
+    tt = timing[timing.nonzero()]
+    print '%.1f pages / min, %.1f sec / page' % (60. / tt.mean(), tt.mean())
 
+
+print 'Checked all pages'
