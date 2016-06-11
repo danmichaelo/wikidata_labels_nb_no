@@ -1,9 +1,9 @@
+#encoding=utf-8
 import os
 import re
 import sys
 import logging
 import time
-import codecs
 import oursql
 
 import urllib
@@ -12,7 +12,6 @@ import json
 from cookielib import CookieJar
 
 import mwclient
-from mwtemplates import TemplateEditor
 
 import numpy as np
 
@@ -27,8 +26,14 @@ opener.addheaders = [('User-agent', 'DanmicholoBot')]
 # https://www.mediawiki.org/wiki/Maxlag
 lagpattern = re.compile(r'Waiting for [^ ]*: (?P<lag>[0-9.]+) seconds? lagged')
 
-sql = oursql.connect(host='wikidatawiki.labsdb', db='wikidatawiki_p', charset='utf8', use_unicode=True,
-                     read_default_file=os.path.expanduser('~/replica.my.cnf'), autoreconnect=True)
+sql = oursql.connect(host='127.0.0.1',
+                    port=4711,
+                    db='wikidatawiki_p',
+                    user='u2238',
+                    passwd='auyaejahlaefohvo',
+                    raise_on_warnings=True,
+                    autoping=True,
+                    autoreconnect=True)
 
 cur = sql.cursor()
 
@@ -46,16 +51,16 @@ def raw_api_call(args):
             else:
                 args[k] = v
 
-        #print args
-        #logging.info(args)
+        # print args
+        # logging.info(args)
 
         data = urllib.urlencode(args)
 
         response = opener.open(url, data=data)
-        #print response.info()
+        # print response.info()
         response = json.loads(response.read())
 
-        #logging.info(response)
+        # logging.info(response)
 
         if 'error' not in response:
             return response
@@ -74,7 +79,8 @@ def raw_api_call(args):
         print args
         print '---------------------------------------------------------------------'
         return response
-        #sys.exit(1)
+        # sys.exit(1)
+
 
 def login(user, pwd):
     args = {
@@ -89,6 +95,7 @@ def login(user, pwd):
 
     return (response['login']['result'] == 'Success')
 
+
 def pageinfo(entity):
     args = {
         'action': 'query',
@@ -98,6 +105,7 @@ def pageinfo(entity):
     }
     return raw_api_call(args)
 
+
 def get_entities(site, page):
     args = {
         'action': 'wbgetentities',
@@ -105,6 +113,7 @@ def get_entities(site, page):
         'titles': page
     }
     return raw_api_call(args)
+
 
 def get_props(q_number):
     args = {
@@ -119,7 +128,8 @@ def get_props(q_number):
         return None
     return result['entities'][q_number]
 
-def set_prop(entity, prop, lang, value, summary=''):
+
+def set_prop(entity, prop, lang, value, summary):
 
     response = pageinfo(entity)
     itm = response['query']['pages'].items()[0][1]
@@ -141,7 +151,8 @@ def set_prop(entity, prop, lang, value, summary=''):
     time.sleep(2)
     return response
 
-def set_aliases(entity, to_add, to_remove):
+
+def set_aliases(entity, to_add, to_remove, old_code, new_code, summary):
 
     if (len(to_add) != 0):
         response = pageinfo(entity)
@@ -154,8 +165,8 @@ def set_aliases(entity, to_add, to_remove):
             'id': entity,
             'action': 'wbsetaliases',
             'bot': 1,
-            'language': 'nb',
-            'summary': 'Copy aliases from [no] to [nb]',
+            'language': new_code,
+            'summary': summary,
             'add': '|'.join(to_add)
         }
         logging.info(args)
@@ -174,9 +185,9 @@ def set_aliases(entity, to_add, to_remove):
             'id': entity,
             'action': 'wbsetaliases',
             'bot': 1,
-            'language': 'no',
+            'language': old_code,
             'remove': '|'.join(to_remove),
-            'summary': 'Remove aliases from deprecated language [no]'
+            'summary': summary
         }
         logging.info(args)
         response = raw_api_call(args)
@@ -184,7 +195,7 @@ def set_aliases(entity, to_add, to_remove):
         time.sleep(4)
 
 
-def check_wikidata_item(q_number):
+def check_wikidata_item(q_number, old_code, new_code, summary):
 
     logging.info('Page: %s', q_number)
 
@@ -192,45 +203,45 @@ def check_wikidata_item(q_number):
 
     if 'aliases' in data:
         res = data['aliases']
-        if 'no' in res:
-            no = set([x['value'] for x in res['no']])
+        if old_code in res:
+            old_values = set([x['value'] for x in res[old_code]])
         else:
-            no = set([])
-        if 'nb' in res:
-            nb = set([x['value'] for x in res['nb']])
+            old_values = set([])
+        if new_code in res:
+            new_values = set([x['value'] for x in res[new_code]])
         else:
-            nb = set([])
-        toremove = list(no)
-        toadd = list(no.difference(nb))
-        set_aliases(q_number, toadd, toremove)
+            new_values = set([])
+        toremove = list(old_values)
+        toadd = list(old_values.difference(new_values))
+        set_aliases(q_number, toadd, toremove, old_code, new_code, summary)
 
     for prop in ['label', 'description']:
         if prop + 's' in data:
             res = data[prop + 's']
-            if 'no' in res and 'nb' not in res:
-                logging.info('  Copy %s value from no to nb' % prop)
-                val = res['no']['value']
-                set_prop(q_number, prop, 'nb', val, 'from the [no] %s' % prop)
-                set_prop(q_number, prop, 'no', '', '')
-            elif 'no' in res and 'nb' in res:
-                vno = res['no']['value']
-                vnb = res['nb']['value']
+            if old_code in res and new_code not in res:
+                logging.info('  Copy %s value from %s to %s', prop, old_code, new_code)
+                val = res[old_code]['value']
+                set_prop(q_number, prop, new_code, val, summary)
+                set_prop(q_number, prop, old_code, '', summary)
+            elif old_code in res and new_code in res:
+                vno = res[old_code]['value']
+                vnb = res[new_code]['value']
                 if vno == vnb:
-                    logging.info('  %s equal. Erasing no value' % prop)
-                    set_prop(q_number, prop, 'no', '', 'since it equalled the [nb] %s.' % (prop))
+                    logging.info('  %s equal. Erasing %s value', prop, old_code)
+                    set_prop(q_number, prop, old_code, '', summary)
                 elif vno[0].lower() + vno[1:] == vnb[0].lower() + vnb[1:]:
-                    logging.info('  %s equal except case of first char. Erasing no value' % prop)
-                    set_prop(q_number, prop, 'nb', vnb[0].lower() + vnb[1:]) 
-                    set_prop(q_number, prop, 'no', '', 'since it equalled the [nb] %s.' % (prop))
+                    logging.info('  %s equal except case of first char. Erasing %s value', prop, old_code)
+                    set_prop(q_number, prop, new_code, vnb[0].lower() + vnb[1:], summary)
+                    set_prop(q_number, prop, old_code, '', summary)
                 else:
                     logging.info('  %s requires manual inspection, %s != %s', prop, vno, vnb)
                     # inspectfile.write('%s\t%s\t%s\t%s\n' % (q_number, prop, vno, vnb))
 
 
 if login(config['user'], config['pass']):
-    logging.info('Hurra, vi er innlogga')
+    logging.info('Logged in')
 else:
-    logging.error('Innloggingen feilet')
+    logging.error('Login failed')
     sys.exit(1)
 
 
@@ -243,19 +254,25 @@ else:
 #checkedfile = codecs.open('checked.txt', 'a', encoding='UTF-8', buffering=0)
 #inspectfile = codecs.open('requires_inspection.txt', 'w', encoding='UTF-8', buffering=0)
 
-nowp = mwclient.Site('no.wikipedia.org')
+old_code = 'no'
+new_code = 'nb'
 
 timing = np.zeros((10,))
 
 cur.execute(u"""
- SELECT term_entity_id FROM wb_terms where term_language="no" AND term_entity_type="item" GROUP BY term_entity_id
-""")
+ SELECT COUNT(*) FROM wb_terms where term_language="%s" AND term_entity_type="item"
+""" % old_code)
+
+logging.info('Terms to check: %s', cur.fetchone()[0])
+
+cur.execute(u"""
+ SELECT term_entity_id FROM wb_terms where term_language="%s" AND term_entity_type="item" GROUP BY term_entity_id
+""" % old_code)
 
 for row in cur.fetchall():
 
-
     t0 = time.time()
-    check_wikidata_item('Q{}'.format(row[0]))
+    check_wikidata_item('Q{}'.format(row[0]), old_code, new_code, 'Cleanup deprecated languages: %s → %s' % (old_code, new_code))
     t1 = time.time()
     timing[0:9] = timing[1:10]
     timing[0] = t1 - t0
@@ -263,4 +280,4 @@ for row in cur.fetchall():
     print '%.1f pages / min, %.1f sec / page' % (60. / tt.mean(), tt.mean())
 
 
-print 'Checked all pages'
+logging.info('Done')
